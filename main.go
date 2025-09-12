@@ -20,7 +20,7 @@ import (
 var ctx = context.Background()
 
 var rdb = redis.NewClient(&redis.Options{
-	Addr:     "localhost:6379",
+	Addr:     os.Getenv("REDIS_ADDR"),
 	Password: "",
 	DB:       0,
 })
@@ -105,8 +105,14 @@ func callCallbackAPI(status StatusEnum, total, passed int, message string, maxTi
 		}
 		jsonBody, _ := json.Marshal(body)
 
+		callbackURL := os.Getenv("CALLBACK_API_URL")
+		if callbackURL == "" {
+			callbackURL = "http://localhost:8080/submission/handleCallBackApiHeheheheasd"
+		}
+
 		req, err := http.NewRequest("POST",
-			"http://localhost:8080/submission/handleCallBackApiHeheheheasd",
+			callbackURL,
+			//"https://webhook.site/9e71df24-4b05-41a5-b936-d66b71b027c4",
 			bytes.NewBuffer(jsonBody),
 		)
 		if err != nil {
@@ -204,7 +210,7 @@ func validateCode(code, lang string) (bool, string) {
 	blocked := map[string][]string{
 		"python": {"import os", "import sys", "import socket", "__import__"},
 		"cpp":    {"#include <fstream>", "#include <sys", "#include <windows"},
-		"java":   {"java.io", "java.net", "ProcessBuilder", "Runtime.getRuntime"},
+		"java":   {"java.io", "java.net", "ProcessBuilder"},
 	}
 	for _, keyword := range blocked[lang] {
 		if strings.Contains(code, keyword) {
@@ -246,22 +252,23 @@ func handleRunCode(req RunRequest, storeResult bool, doCallback bool) (map[strin
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	stop := false
 	results := make([]TestCaseResult, total)
+
+	finalStatus := ACCEPTED
+	finalMsg := ""
 
 	for i, t := range req.TestCases {
 		wg.Add(1)
 		go func(i int, t TestCase) {
 			defer wg.Done()
-			if stop {
-				return
-			}
 			output, status, msg, elapsed := runSingleTest(req.Language, req.Code, t.Input, req.TimeLimit, compiledPath)
 			result := TestCaseResult{CaseID: i, Status: status, Message: msg, Time: elapsed}
+
 			if status == ACCEPTED && output != strings.TrimSpace(t.ExpectedOutput) {
 				result.Status = WRONG_ANSWER
 				result.Message = fmt.Sprintf("Expected: %s, Got: %s", t.ExpectedOutput, output)
 			}
+
 			mu.Lock()
 			results[i] = result
 			if result.Time > maxTime {
@@ -269,9 +276,14 @@ func handleRunCode(req RunRequest, storeResult bool, doCallback bool) (map[strin
 			}
 			if result.Status == ACCEPTED {
 				passedCount++
-			} else if !stop && doCallback {
-				stop = true
-				callCallbackAPI(result.Status, total, passedCount, result.Message, maxTime, req.SubmissionID)
+			} else {
+				if finalStatus == ACCEPTED {
+					finalStatus = result.Status
+					finalMsg = result.Message
+					if doCallback {
+						callCallbackAPI(finalStatus, total, passedCount, finalMsg, maxTime, req.SubmissionID)
+					}
+				}
 			}
 			if storeResult {
 				SaveTestCaseResult(req.SubmissionID, result)
@@ -281,11 +293,17 @@ func handleRunCode(req RunRequest, storeResult bool, doCallback bool) (map[strin
 	}
 	wg.Wait()
 
-	if !stop && doCallback {
+	if finalStatus == ACCEPTED && doCallback {
 		callCallbackAPI(ACCEPTED, total, passedCount, "All testcases passed", maxTime, req.SubmissionID)
 	}
 
-	return gin.H{"status": ACCEPTED, "passed": passedCount, "total": total, "results": results}, ACCEPTED
+	return gin.H{
+		"status":  finalStatus,
+		"passed":  passedCount,
+		"total":   total,
+		"results": results,
+		"message": finalMsg,
+	}, finalStatus
 }
 
 func main() {
@@ -320,6 +338,11 @@ func main() {
 		}
 		c.JSON(http.StatusOK, results)
 	})
-
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"message": "runner is healthy",
+		})
+	})
 	r.Run(":1337")
 }

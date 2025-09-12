@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  code-runner:
+    image: iamtdf/code-runner:latest
+    container_name: code-runner
+    ports:
+      - "1337:1337"
+    environment:
+      - CALLBACK_API_URL=http://backend:8080/submission/handleCallBackApiHeheheheasd
+      - TZ=Asia/Ho_Chi_Minh
+      - REDIS_ADDR=redis-stack-local:6379
+    restart: unless-stopped
