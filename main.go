@@ -63,7 +63,7 @@ func SaveTestCaseResult(submissionID string, result TestCaseResult) error {
 	if err != nil {
 		return err
 	}
-	return rdb.Set(ctx, key, jsonData, 0).Err()
+	return rdb.Set(ctx, key, jsonData, 10*time.Minute).Err()
 }
 
 func GetTestCaseResults(submissionID string) ([]TestCaseResult, error) {
